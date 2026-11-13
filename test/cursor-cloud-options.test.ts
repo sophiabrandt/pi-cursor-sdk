@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveCursorSdkConfig } from "../src/cursor-config.js";
 import {
 	buildCursorCloudAgentOptions,
@@ -10,6 +10,10 @@ import {
 const OUTSIDE_GIT = { insideGitRepo: false } as const;
 
 describe("Cursor cloud options", () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	it("tracks the installed SDK PR-control contract", () => {
 		const sdkDist = new URL("../node_modules/@cursor/sdk/dist/esm/", import.meta.url);
 		const options = readFileSync(new URL("options.d.ts", sdkDist), "utf8");
@@ -71,6 +75,28 @@ describe("Cursor cloud options", () => {
 		expect(result).not.toHaveProperty("mcpServers");
 		expect(result).not.toHaveProperty("agentId");
 		expect(result).not.toHaveProperty("agents");
+	});
+
+	it("threads CURSOR_TEAMID into cloud Agent options", () => {
+		vi.stubEnv("CURSOR_TEAMID", "123");
+		const result = buildCursorCloudAgentOptions({
+			apiKey: "test-key",
+			modelSelection: { id: "composer-2.5" },
+			agentMode: "agent",
+			resolvedConfig: resolveCursorSdkConfig({ env: {} }),
+		});
+		expect(result).toEqual(expect.objectContaining({ teamId: 123 }));
+	});
+
+	it.each(["0", "abc"])("omits teamId from cloud Agent options for invalid CURSOR_TEAMID=%s", (raw) => {
+		vi.stubEnv("CURSOR_TEAMID", raw);
+		const result = buildCursorCloudAgentOptions({
+			apiKey: "test-key",
+			modelSelection: { id: "composer-2.5" },
+			agentMode: "agent",
+			resolvedConfig: resolveCursorSdkConfig({ env: {} }),
+		});
+		expect(result).not.toHaveProperty("teamId");
 	});
 
 	it("passes full custom model selections to public cloud options without adding MCP", () => {

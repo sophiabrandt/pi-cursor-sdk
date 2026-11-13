@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { writeRawTestEvidence } from "./helpers/raw-test-evidence.mjs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { computeCursorContextFingerprint } from "../src/context.js";
 import { __testUtils as cursorSessionScopeTestUtils, registerCursorSessionScope } from "../src/cursor-session-scope.js";
 import { __testUtils as resumeTestUtils, registerCursorSessionAgentResume, CURSOR_SESSION_AGENT_RESUME_ENTRY_TYPE } from "../src/cursor-session-agent-resume.js";
@@ -33,6 +33,10 @@ describe("cursor-session-agent local resume", () => {
 		resumeTestUtils.reset();
 		await sessionAgentTestUtils.disposeAllSessionCursorAgents();
 		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
 	});
 
 	it("resumes a recorded local SDK agent from its versioned session store", async () => {
@@ -100,6 +104,66 @@ describe("cursor-session-agent local resume", () => {
 		);
 		expect(createAgent).not.toHaveBeenCalled();
 		expect(resumeAgent.mock.calls[0][1]).not.toHaveProperty("agents");
+	});
+
+	it.each([
+		["123", 123],
+		["0", undefined],
+	])("threads CURSOR_TEAMID=%s into the resume options (teamId=%s)", async (raw, expectedTeamId) => {
+		vi.stubEnv("CURSOR_TEAMID", raw);
+		const scopeKey = "/tmp/sessions/test.jsonl";
+		const stateRoot = buildCursorSessionStateRoot("/tmp/cursor-sdk-state/workspace", scopeKey);
+		const sendState = {
+			bootstrapped: true as const,
+			contextFingerprint: computeCursorContextFingerprint(makeContext()),
+			incrementalSendCount: 3,
+		};
+		const resumedAgent = { agentId: "agent-recorded", [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined) };
+		const createAgent = vi.fn().mockResolvedValue({ agentId: "agent-new", [Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined) });
+		const resumeAgent = vi.fn().mockResolvedValue(resumedAgent);
+		cursorSessionScopeTestUtils.set("/tmp/project", scopeKey);
+		const poolKey = expectedTeamId === undefined
+			? historicalPoolKey(scopeKey)
+			: `${historicalPoolKey(scopeKey)}\0team:${expectedTeamId}`;
+		resumeTestUtils.set({
+			scopeKey,
+			sessionFile: scopeKey,
+			cwd: "/tmp/project",
+			repoRoot: undefined,
+			branchPathHash: resumeTestUtils.EMPTY_BRANCH_HASH,
+			compactionGeneration: 0,
+			activeHandle: {
+				version: 2,
+				runtime: "local",
+				agentId: "agent-recorded",
+				scopeKey,
+				sessionFile: scopeKey,
+				cwd: "/tmp/project",
+				poolKey,
+				branchPathHash: resumeTestUtils.EMPTY_BRANCH_HASH,
+				compactionGeneration: 0,
+				sendState,
+				createdAt: "2026-07-07T00:00:00.000Z",
+				storeIdentity: { version: 1, stateRoot },
+			},
+		});
+
+		const lease = await acquireSessionCursorAgent({
+			apiKey: "test-key",
+			agentMode: "agent",
+			cwd: "/tmp/project",
+			modelSelection: { id: "composer-2.5" },
+			localResume: true,
+			createAgent,
+			resumeAgent,
+		});
+
+		expect(lease.resumed).toBe(true);
+		expect(resumeAgent).toHaveBeenCalledTimes(1);
+		const resumeOptions = resumeAgent.mock.calls[0][1];
+		if (expectedTeamId === undefined) expect(resumeOptions).not.toHaveProperty("teamId");
+		else expect(resumeOptions).toEqual(expect.objectContaining({ teamId: expectedTeamId }));
+		expect(createAgent).not.toHaveBeenCalled();
 	});
 
 	it("persists digest-only definitions and resumes same content, rejecting changed content from reopened JSONL", async () => {

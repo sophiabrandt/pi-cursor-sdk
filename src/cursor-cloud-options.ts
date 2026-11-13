@@ -6,6 +6,7 @@ import {
 	type CursorCloudLocalState,
 	type CursorCloudLocalStateUnknownReason,
 } from "./cursor-cloud-local-state.js";
+import { resolveCursorTeamId } from "./cursor-team-id.js";
 
 export interface CursorCloudPreflightIssue {
 	code:
@@ -87,8 +88,10 @@ export function buildCursorCloudAgentOptions(options: {
 			? { skipReviewerRequest: resolvedConfig.cloud.skipReviewerRequest.value }
 			: {}),
 	};
+	const teamId = resolveCursorTeamId();
 	return {
 		apiKey: options.apiKey,
+		...(teamId !== undefined ? { teamId } : {}),
 		model: options.modelSelection,
 		mode: options.agentMode,
 		...(options.name ? { name: options.name } : {}),

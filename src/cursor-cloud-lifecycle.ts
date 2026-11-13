@@ -3,6 +3,7 @@ import { closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, ope
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { resolveCursorApiKey } from "./cursor-api-key.js";
+import { resolveCursorTeamId } from "./cursor-team-id.js";
 import {
 	MAX_CLOUD_REPORT_BRANCHES,
 	type CursorCloudRunReport,
@@ -677,7 +678,8 @@ async function mutateRecordedCloudAgent(params: {
 	// anchor, even if Pi replaces the context or selects another branch.
 	anchorEntryId = manager.getBranch().at(-1)?.id;
 	try {
-		await operations[params.action](params.agentId, { apiKey });
+		const teamId = resolveCursorTeamId();
+		await operations[params.action](params.agentId, { apiKey, ...(teamId !== undefined ? { teamId } : {}) });
 	} catch (error) {
 		ui.notify(
 			`Cursor cloud ${params.action} for agent ${params.agentId} is unresolved: ${formatCloudLifecycleError(error, apiKey)} Inspect it in the Cursor Cloud dashboard before retrying.`,

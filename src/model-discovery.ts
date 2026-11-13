@@ -10,6 +10,7 @@ import { getCursorModelSelectionIdentities } from "../shared/cursor-model-select
 import { loadContextWindowCache } from "./context-window-cache.js";
 import { loadCursorSdk } from "./cursor-sdk-runtime.js";
 import { normalizeCursorApiKey } from "./cursor-api-key.js";
+import { resolveCursorTeamId } from "./cursor-team-id.js";
 import { sanitizeCursorProviderError } from "./cursor-provider-errors.js";
 import {
 	fingerprintApiKey,
@@ -416,7 +417,8 @@ export async function discoverModels(options: DiscoverModelsOptions = {}): Promi
 		});
 	}
 
-	const keyFingerprint = fingerprintApiKey(apiKey);
+	const teamId = resolveCursorTeamId();
+	const keyFingerprint = fingerprintApiKey(teamId !== undefined ? `${apiKey}\u0000${teamId}` : apiKey);
 
 	if (!options.forceRefresh || options.allowNetwork === false) {
 		const cachedModels = options.allowNetwork === false
@@ -439,7 +441,7 @@ export async function discoverModels(options: DiscoverModelsOptions = {}): Promi
 		options.signal?.throwIfAborted();
 		// SDK 1.0.37 CursorRequestOptions has no caller signal. A late response
 		// still cannot publish outside the native generation that requested it.
-		const models = await Cursor.models.list({ apiKey });
+		const models = await Cursor.models.list({ apiKey, ...(teamId !== undefined ? { teamId } : {}) });
 		options.signal?.throwIfAborted();
 		if (models.length > 0) {
 			return publishModelItems(models, options, { source: "live" }, keyFingerprint);

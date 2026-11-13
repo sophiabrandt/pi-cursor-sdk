@@ -1,3 +1,4 @@
+import { resolveCursorTeamId } from "./cursor-team-id.js";
 import { closeSync, constants, fsyncSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -58,7 +59,8 @@ export function registerCursorUsageCommand(pi: Pick<ExtensionAPI, "appendEntry" 
 				if (argument === "refresh") {
 					const { Agent } = await loadCursorSdk();
 					const apiKey = resolveCursorApiKey(await ctx.modelRegistry.getApiKeyForProvider("cursor"));
-					view = await refreshCursorUsageView(pi, ctx, agentId => fetchCursorSdkAgentUsage({ getUsage: () => Agent.getUsage(agentId, { apiKey }) }));
+					const teamId = resolveCursorTeamId();
+					view = await refreshCursorUsageView(pi, ctx, agentId => fetchCursorSdkAgentUsage({ getUsage: () => Agent.getUsage(agentId, { apiKey, ...(teamId !== undefined ? { teamId } : {}) }) }));
 				} else if (argument.startsWith("export ")) {
 					const path = resolve(ctx.cwd, argument.slice(7).trim());
 					const fd = createRegularFileExclusive(path, constants.O_WRONLY, 0o600);

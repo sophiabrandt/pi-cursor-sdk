@@ -48,6 +48,7 @@ describe("discoverModels", () => {
 	beforeEach(() => {
 		process.env = { ...originalEnv };
 		delete process.env.CURSOR_API_KEY;
+		delete process.env.CURSOR_TEAMID;
 		delete process.env.PI_CURSOR_HIDE_MODELS_WHEN_LOGGED_OUT;
 		tmpAgentDir = mkdtempSync(join(tmpdir(), "pi-cursor-discovery-"));
 		process.env.PI_CODING_AGENT_DIR = tmpAgentDir;

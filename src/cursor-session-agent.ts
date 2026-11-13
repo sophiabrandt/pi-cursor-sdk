@@ -9,6 +9,7 @@ import {
 	type CursorPiToolBridgeRun,
 	type CursorPiToolRequestHandler,
 } from "./cursor-pi-tool-bridge.js";
+import { resolveCursorTeamId } from "./cursor-team-id.js";
 import { computeCursorContextFingerprint } from "./context.js";
 import { getCursorSessionScopeSnapshot, getCursorSessionScopeGeneration, getCursorSessionScopeKey, type CursorTurnScope } from "./cursor-session-scope.js";
 import {
@@ -149,6 +150,8 @@ interface SessionCursorAgentCreateParams {
 	scope?: CursorTurnScope;
 	bridge?: CursorPiToolBridge;
 	apiKey: string;
+	/** Snapshotted once per acquisition so pool key and SDK options agree. */
+	teamId?: number;
 	agentMode: AgentModeOption;
 	cwd: string;
 	modelSelection: ModelSelection;
@@ -244,6 +247,10 @@ function buildApiKeyPoolKeyFingerprint(apiKey: string): string {
 	return createHash("sha256").update(apiKey).digest("hex").slice(0, 16);
 }
 
+function buildCursorTeamIdPoolKeySuffix(teamId: number | undefined): string[] {
+	return teamId !== undefined ? [`team:${teamId}`] : [];
+}
+
 function buildBridgePoolKeySuffix(registeredBridge: CursorPiToolBridge | undefined): string {
 	if (!registeredBridge) return "bridge:absent";
 	return registeredBridge.getToolSurfaceSignature();
@@ -265,6 +272,7 @@ function buildCustomSubagentPoolKeySuffix(agents: AgentOptions["agents"]): strin
 }
 
 function buildSessionAgentPoolKey(scopeKey: string, params: SessionCursorAgentCreateParams): string {
+	const teamId = params.teamId;
 	return [
 		params.scope?.persistentScopeKey ?? scopeKey,
 		params.cwd,
@@ -279,6 +287,7 @@ function buildSessionAgentPoolKey(scopeKey: string, params: SessionCursorAgentCr
 		buildApiKeyPoolKeyFingerprint(params.apiKey),
 		buildBridgePoolKeySuffix("bridge" in params ? params.bridge : getRegisteredCursorPiToolBridge()),
 		...buildCustomSubagentPoolKeySuffix(params.agents),
+		...buildCursorTeamIdPoolKeySuffix(teamId),
 		// Omit for the default so historical durable keys remain byte-for-byte stable.
 		...(params.nativeToolsEnabled === false ? ["tools:mcp-only"] : []),
 	].join("\0");
@@ -474,6 +483,7 @@ async function createSessionAgentInstance(
 	let bridgeRun: CursorPiToolBridgeRun | undefined;
 	let sessionStore: OpenCursorSessionStore | undefined;
 	let releaseAgentClaim: (() => void) | undefined;
+	const teamId = params.teamId;
 	try {
 		const registeredBridge = params.bridge;
 		if (registeredBridge) {
@@ -509,6 +519,7 @@ async function createSessionAgentInstance(
 		let resumeNotice = storeSelection.resumeFallback ? LOCAL_RESUME_FALLBACK_NOTICE : undefined;
 		const buildAgentOptions = () => ({
 			apiKey: params.apiKey,
+			...(teamId !== undefined ? { teamId } : {}),
 			model: params.modelSelection,
 			mode: params.agentMode,
 			local: buildCursorLocalAgentOptions({
@@ -588,7 +599,7 @@ export function invalidateSessionAgent(
 }
 
 export async function acquireSessionCursorAgent(input: SessionCursorAgentCreateParams): Promise<SessionCursorAgentLease> {
-	const params = { ...input, scope: input.scope ?? getCursorSessionScopeSnapshot(), bridge: "bridge" in input ? input.bridge : getRegisteredCursorPiToolBridge() };
+	const params = { ...input, teamId: "teamId" in input ? input.teamId : resolveCursorTeamId(), scope: input.scope ?? getCursorSessionScopeSnapshot(), bridge: "bridge" in input ? input.bridge : getRegisteredCursorPiToolBridge() };
 	const scopeKey = params.scope.scopeKey;
 	const persistentStore = params.scope.sessionFile !== undefined;
 	params.storeRoot = persistentStore && params.storeRoot !== undefined ? normalizeCursorCustomStoreRoot(params.storeRoot) : undefined;

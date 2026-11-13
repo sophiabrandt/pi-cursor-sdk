@@ -1,5 +1,5 @@
 import { toNamespacedPath } from "node:path";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createEventHarness, makeContext } from "./helpers/pi-harness.js";
 import { __testUtils as cursorSessionScopeTestUtils, registerCursorSessionScope } from "../src/cursor-session-scope.js";
 import { __testUtils as resumeTestUtils } from "../src/cursor-session-agent-resume.js";
@@ -20,6 +20,10 @@ describe("cursor-session-agent", () => {
 		resumeTestUtils.reset();
 		await sessionAgentTestUtils.disposeAllSessionCursorAgents();
 		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
 	});
 
 	it("passes one session-scoped store through Agent.create and disposes it with the pooled agent", async () => {
@@ -66,6 +70,87 @@ describe("cursor-session-agent", () => {
 		});
 
 		expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ mode: "plan" }));
+	});
+
+	it("threads CURSOR_TEAMID into Agent.create options", async () => {
+		vi.stubEnv("CURSOR_TEAMID", "123");
+		const createAgent = vi.fn().mockResolvedValue({
+			agentId: "agent-team",
+			[Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
+		});
+		cursorSessionScopeTestUtils.set("/tmp/project", "/tmp/sessions/test.jsonl");
+
+		await acquireSessionCursorAgent({
+			apiKey: "test-key",
+			agentMode: "agent",
+			cwd: "/tmp/project",
+			modelSelection: { id: "composer-2.5" },
+			createAgent,
+		});
+
+		expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ teamId: 123 }));
+	});
+
+	it("omits teamId from Agent.create options when CURSOR_TEAMID is unset", async () => {
+		const createAgent = vi.fn().mockResolvedValue({
+			agentId: "agent-no-team",
+			[Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
+		});
+		cursorSessionScopeTestUtils.set("/tmp/project", "/tmp/sessions/test.jsonl");
+
+		await acquireSessionCursorAgent({
+			apiKey: "test-key",
+			agentMode: "agent",
+			cwd: "/tmp/project",
+			modelSelection: { id: "composer-2.5" },
+			createAgent,
+		});
+
+		expect(createAgent.mock.calls[0][0]).not.toHaveProperty("teamId");
+	});
+
+	it.each(["0", "abc"])("omits teamId from Agent.create options for invalid CURSOR_TEAMID=%s", async (raw) => {
+		vi.stubEnv("CURSOR_TEAMID", raw);
+		const createAgent = vi.fn().mockResolvedValue({
+			agentId: "agent-invalid-team",
+			[Symbol.asyncDispose]: vi.fn().mockResolvedValue(undefined),
+		});
+		cursorSessionScopeTestUtils.set("/tmp/project", "/tmp/sessions/test.jsonl");
+
+		await acquireSessionCursorAgent({
+			apiKey: "test-key",
+			agentMode: "agent",
+			cwd: "/tmp/project",
+			modelSelection: { id: "composer-2.5" },
+			createAgent,
+		});
+
+		expect(createAgent.mock.calls[0][0]).not.toHaveProperty("teamId");
+	});
+
+	it("replaces the pooled agent when CURSOR_TEAMID changes", async () => {
+		vi.stubEnv("CURSOR_TEAMID", "123");
+		const mockDispose = vi.fn().mockResolvedValue(undefined);
+		const createAgent = vi.fn().mockImplementation(async () => ({
+			agentId: `agent-${createAgent.mock.calls.length}`,
+			[Symbol.asyncDispose]: mockDispose,
+		}));
+		cursorSessionScopeTestUtils.set("/tmp/project", "/tmp/sessions/test.jsonl");
+		const params = {
+			apiKey: "test-key",
+			agentMode: "agent" as const,
+			cwd: "/tmp/project",
+			modelSelection: { id: "composer-2.5" },
+			createAgent,
+		};
+
+		const first = await acquireSessionCursorAgent(params);
+		vi.stubEnv("CURSOR_TEAMID", "456");
+		const second = await acquireSessionCursorAgent(params);
+
+		expect(second.agent).not.toBe(first.agent);
+		expect(createAgent).toHaveBeenCalledTimes(2);
+		expect(mockDispose).toHaveBeenCalledTimes(1);
 	});
 
 	it("keeps Cursor SDK mode out of the session agent pool key", async () => {

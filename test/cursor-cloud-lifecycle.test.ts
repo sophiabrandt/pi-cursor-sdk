@@ -76,6 +76,7 @@ describe("Cursor cloud lifecycle ledger", () => {
 
 	afterEach(() => {
 		cloudLifecycleTestUtils.reset();
+		vi.unstubAllEnvs();
 		vi.clearAllMocks();
 	});
 
@@ -937,6 +938,41 @@ describe("Cursor cloud lifecycle ledger", () => {
 			runtime: "cloud",
 			agentId: cloudAgentId(),
 		}));
+	});
+
+	it.each(["archive", "delete"] as const)("threads CURSOR_TEAMID into %s mutation options", async (action) => {
+		vi.stubEnv("CURSOR_TEAMID", "123");
+		const archive = vi.fn().mockResolvedValue(undefined);
+		const deleteAgent = vi.fn().mockResolvedValue(undefined);
+		cloudLifecycleTestUtils.setSdkOperations({ archive, delete: deleteAgent });
+		const pi = createPiHarness();
+		registerCloudLifecycle(pi);
+
+		await pi.runCommand("cursor-cloud", `${action} ${cloudAgentId()}${action === "delete" ? " --yes" : ""}`, {
+			sessionManager: { getBranch: vi.fn(() => [recordEntry()]) },
+		});
+
+		const operation = action === "archive" ? archive : deleteAgent;
+		expect(operation).toHaveBeenCalledTimes(1);
+		expect(operation).toHaveBeenCalledWith(cloudAgentId(), expect.objectContaining({ apiKey: "test-key", teamId: 123 }));
+	});
+
+	it.each(["archive", "delete"] as const)("omits teamId from %s mutation options for invalid CURSOR_TEAMID", async (action) => {
+		vi.stubEnv("CURSOR_TEAMID", "0");
+		const archive = vi.fn().mockResolvedValue(undefined);
+		const deleteAgent = vi.fn().mockResolvedValue(undefined);
+		cloudLifecycleTestUtils.setSdkOperations({ archive, delete: deleteAgent });
+		const pi = createPiHarness();
+		registerCloudLifecycle(pi);
+
+		await pi.runCommand("cursor-cloud", `${action} ${cloudAgentId()}${action === "delete" ? " --yes" : ""}`, {
+			sessionManager: { getBranch: vi.fn(() => [recordEntry()]) },
+		});
+
+		const operation = action === "archive" ? archive : deleteAgent;
+		expect(operation).toHaveBeenCalledTimes(1);
+		expect(operation).toHaveBeenCalledWith(cloudAgentId(), expect.objectContaining({ apiKey: "test-key" }));
+		expect(operation.mock.calls[0]?.[1]).not.toHaveProperty("teamId");
 	});
 
 	it("rejects empty, non-cloud, wildcard, unrecorded, and bulk IDs before SDK calls", async () => {

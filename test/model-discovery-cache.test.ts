@@ -10,6 +10,7 @@ import {
 	type CursorModelCatalogProvenance,
 	type CursorModelFallbackIssue,
 } from "../src/model-discovery.js";
+import { fingerprintApiKey, loadAnyCachedModelCatalog, saveModelListCache } from "../src/model-list-cache.js";
 
 vi.mock("@cursor/sdk", () => ({
 	Cursor: { models: { list: vi.fn() } },
@@ -33,6 +34,7 @@ describe("discoverModels model-list cache", () => {
 	beforeEach(() => {
 		process.env = { ...originalEnv };
 		delete process.env.CURSOR_API_KEY;
+		delete process.env.CURSOR_TEAMID;
 		delete process.env.PI_CURSOR_SDK_DISABLE_MODEL_CACHE;
 		delete process.env.PI_CURSOR_SDK_MODEL_CACHE_TTL_MS;
 		tmpAgentDir = mkdtempSync(join(tmpdir(), "pi-cursor-discovery-cache-"));
@@ -158,5 +160,49 @@ describe("discoverModels model-list cache", () => {
 		expect(issues[0].errorMessage).toBe("Cursor SDK request failed without further error details.");
 		expect(issues[0].message).not.toMatch(/API key|\/login/);
 		expect(issues[0].message).not.toContain("undefined");
+	});
+
+	it("scopes the cache key by team id: a team catalog is not served without the team and vice versa", async () => {
+		process.env.CURSOR_API_KEY = "cache-key";
+		// Save the catalog under the team-scoped key.
+		process.env.CURSOR_TEAMID = "123";
+		mockedList.mockResolvedValueOnce([MODEL]);
+		const teamCatalogs: CursorModelCatalogProvenance[] = [];
+		await discoverModels({ apiKey: process.env.CURSOR_API_KEY, onCatalog: (catalog) => teamCatalogs.push(catalog) });
+		expect(teamCatalogs).toEqual([{ source: "live" }]);
+		expect(loadAnyCachedModelCatalog(fingerprintApiKey(`cache-key\u0000123`))?.models).toHaveLength(1);
+		expect(loadAnyCachedModelCatalog(fingerprintApiKey("cache-key"))).toBeUndefined();
+
+		// The team catalog must not be served when no team resolves.
+		delete process.env.CURSOR_TEAMID;
+		const ambientCatalogs: CursorModelCatalogProvenance[] = [];
+		await discoverModels({ apiKey: process.env.CURSOR_API_KEY, allowNetwork: false, onCatalog: (catalog) => ambientCatalogs.push(catalog) });
+		expect(ambientCatalogs).toEqual([{ source: "bundled", issue: expect.objectContaining({ reason: "cache-only" }) }]);
+
+		// Save the catalog under the plain (no-team) key and flip the direction.
+		delete process.env.CURSOR_TEAMID;
+		mockedList.mockResolvedValueOnce([MODEL]);
+		const plainCatalogs: CursorModelCatalogProvenance[] = [];
+		await discoverModels({ apiKey: process.env.CURSOR_API_KEY, onCatalog: (catalog) => plainCatalogs.push(catalog) });
+		expect(plainCatalogs).toEqual([{ source: "live" }]);
+		expect(loadAnyCachedModelCatalog(fingerprintApiKey("cache-key"))?.models).toHaveLength(1);
+
+		process.env.CURSOR_TEAMID = "123";
+		const teamCatalogsAgain: CursorModelCatalogProvenance[] = [];
+		await discoverModels({ apiKey: process.env.CURSOR_API_KEY, allowNetwork: false, onCatalog: (catalog) => teamCatalogsAgain.push(catalog) });
+		expect(teamCatalogsAgain).toEqual([{ source: "bundled", issue: expect.objectContaining({ reason: "cache-only" }) }]);
+	});
+
+	it("keeps the no-team cache key byte-identical to fingerprintApiKey(apiKey)", async () => {
+		process.env.CURSOR_API_KEY = "cache-key";
+		delete process.env.CURSOR_TEAMID;
+		mockedList.mockResolvedValueOnce([MODEL]);
+		const catalogs: CursorModelCatalogProvenance[] = [];
+		await discoverModels({ apiKey: process.env.CURSOR_API_KEY, onCatalog: (catalog) => catalogs.push(catalog) });
+		expect(catalogs).toEqual([{ source: "live" }]);
+		// The live save must land under exactly today's no-team fingerprint, so
+		// existing users' cached catalogs stay valid when the var is unset.
+		expect(loadAnyCachedModelCatalog(fingerprintApiKey("cache-key"))?.models).toEqual([MODEL]);
+		expect(fingerprintApiKey("cache-key\u0000123")).not.toBe(fingerprintApiKey("cache-key"));
 	});
 });
