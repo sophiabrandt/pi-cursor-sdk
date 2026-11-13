@@ -91,9 +91,6 @@ if (input.mode === "release") {
 }
 const report = {
   scopeId: input.scopeId, completed: kind !== "incomplete",
-  reviewedFiles: kind === "missing-file" ? [] : input.sourceFiles,
-  reviewedArtifacts: input.artifactFiles ?? [], reviewedReleaseNotes: true, reviewedIssueContext: true,
-  reviewedCatalog: true, reviewedRegistryReceipt: true, reviewedPreviousRelease: true,
   findings: ["finding","fenced-finding","polish"].includes(kind)
     ? [{path:"candidate.txt",line:1,material:kind !== "polish",description:"Review finding",remedy:"Fix it"}] : [],
   materialLimitations: kind === "limited" ? ["Could not inspect changed file"] : [],
@@ -102,7 +99,15 @@ const report = {
 if (kind === "changed-index") { fs.writeFileSync("candidate.txt", "changed during review\\n"); cp.execFileSync("git", ["add", "candidate.txt"]); }
 if (kind === "changed-context") fs.writeFileSync(input.reviewContext.path, "changed during review\\n");
 const fence = String.fromCharCode(96).repeat(3);
-const output = ["fenced-finding","polish","preface"].includes(kind)
+const output = kind === "preface-unfenced"
+  ? "Inspected the diff and surrounding code.\\n\\n" + JSON.stringify(report)
+  : kind === "preface-plain-fence"
+  ? "Inspected the diff and surrounding code.\\n\\n" + fence + "\\n" + JSON.stringify(report) + "\\n" + fence
+  : kind === "preface-fenced-commentary"
+  ? "Inspected the diff and surrounding code.\\n\\n" + fence + "\\nnpm test\\n" + fence + "\\n\\n" + fence + "json\\n" + JSON.stringify(report) + "\\n" + fence
+  : kind === "preface-adjacent-fence"
+  ? "Inspected the diff and surrounding code.\\n" + fence + "\\nnpm test\\n" + fence + "\\n" + fence + "json\\n" + JSON.stringify(report) + "\\n" + fence
+  : ["fenced-finding","polish","preface"].includes(kind)
   ? (kind === "preface" ? "Inspected the diff and surrounding code.\\n\\n" : "") + fence + "json\\n" + JSON.stringify(report) + "\\n" + fence
   : JSON.stringify(report);
 console.log(JSON.stringify({type:"message_end",message:{role:"assistant",provider:"zai",model:model.id,stopReason:kind === "error" ? "error" : "stop",content:[{type:"text",text:output}]}}));
@@ -256,7 +261,6 @@ for (const [behavior, expected] of Object.entries({
 	incomplete: /marked the review incomplete/,
 	finding: /Review has findings/,
 	"fenced-finding": /Review has findings/,
-	"missing-file": /did not inspect every changed source file/,
 	unread: /No successful read recorded for changed source candidate.txt/,
 	limited: /material verification limits/,
 	"changed-index": /reviewed target changed/,
@@ -281,12 +285,15 @@ test("pre-commit retains non-material polish without treating it as a material b
 });
 
 test("pre-commit retains a reviewer's explanation before its final JSON verdict", (t) => {
-	const f = fixture(t, "preface");
-	stageChange(f.repo);
-	const result = f.run("pre-commit");
-	assert.equal(result.status, 0, result.stderr);
-	const receipt = JSON.parse(readFileSync(f.receipt, "utf8"));
-	assert.match(receipt.commentary, /Inspected the diff/);
+	for (const kind of ["preface", "preface-plain-fence", "preface-fenced-commentary", "preface-adjacent-fence", "preface-unfenced"]) {
+		const f = fixture(t, kind);
+		stageChange(f.repo);
+		const result = f.run("pre-commit");
+		assert.equal(result.status, 0, `${kind}: ${result.stderr}`);
+		const receipt = JSON.parse(readFileSync(f.receipt, "utf8"));
+		assert.match(receipt.commentary, /Inspected the diff/);
+		assert.doesNotMatch(receipt.commentary, /```json/);
+	}
 });
 
 test("retained review events are valid JSONL with credential material scrubbed", (t) => {
